@@ -8,10 +8,6 @@ folium>=0.14
 matplotlib>=3.6
 dbfread>=2.0.7
 
-# numba + llvmlite (keep compatible)
-llvmlite==0.41.1
-numba==0.57.1
-
 # Geospatial (pinned — may still fail if system libs missing)
 pyproj==3.6.0
 shapely==2.0.1
