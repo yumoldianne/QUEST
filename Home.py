@@ -237,17 +237,19 @@ def load_flood_gdf_from_bytes(uploaded_file):
 
 
 # -------------------------
-# Build router (cached resource) - avoid hashing GeoDataFrame by leading "_" prefix
+# Build router (cached resource) - do NOT hash the GeoDataFrame by using a leading underscore
 # -------------------------
 @st.cache_resource
-def build_router_class_and_instance(_flood_gdf_obj, grid_res, simplify_tol_m, evac_centers_list, uploaded_nb_bytes=None):
+def build_router_class_and_instance(_flood_gdf_obj, grid_res, simplify_tol_m, evac_centers_list, uploaded_nb_bytes=None, risk_penalty=1.0):
     """
-    Load router class from router.py or notebook and return a built router instance (with network built).
-    Leading underscore in the GeoDataFrame argument name prevents Streamlit from trying to hash it.
+    Build and return a router instance. Do NOT let Streamlit attempt to hash the GeoDataFrame:
+    - Leading underscore in parameter name prevents hashing (Streamlit treats it as unhashable).
+    - Call it like: build_router_class_and_instance(flood_gdf, grid_res, simplify_tol_m, evac_centers, uploaded_nb_bytes=...)
     """
-    flood_gdf_obj = _flood_gdf_obj  # local name for readability
+    # Local name for readability
+    flood_gdf_obj = _flood_gdf_obj
 
-    # Load class
+    # Load class (from router.py or routing.ipynb)
     try:
         RouterClass = get_router_class(local_notebook_path=Path("routing.ipynb"), uploaded_nb_bytes=uploaded_nb_bytes)
     except Exception as e:
@@ -255,34 +257,43 @@ def build_router_class_and_instance(_flood_gdf_obj, grid_res, simplify_tol_m, ev
 
     # Instantiate router. Try common constructor signatures:
     try:
+        # preferred: constructor accepts flood_gdf_or_path
         router = RouterClass(flood_gdf_or_path=flood_gdf_obj, grid_resolution=grid_res)
     except TypeError:
-        # fallback to alternate constructor patterns
         try:
+            # alternative: (flood_gdf, grid_resolution)
             router = RouterClass(flood_gdf_obj, grid_resolution=grid_res)
         except Exception as e:
             raise RuntimeError(f"Failed to instantiate router class: {e}") from e
 
-    # Set evac centers
+    # Set evac centers if method exists
     if hasattr(router, "set_evacuation_centers"):
         try:
             router.set_evacuation_centers(evac_centers_list)
         except Exception:
-            # ignore if something odd; still proceed
+            # ignore if something odd; continue
             pass
     else:
-        st.warning("Router class does not expose `set_evacuation_centers`. Make sure the class in router.py has that method.")
+        st.warning("Router class does not expose `set_evacuation_centers`. Ensure the class has this method.")
 
-    # Build network (heavy)
+    # Apply simplify tolerance if the router exposes it
     try:
         if hasattr(router, "flood_simplify_tol_m"):
             router.flood_simplify_tol_m = simplify_tol_m
     except Exception:
         pass
 
-    router.build_routing_network(verbose=False, use_cache=True)
-    return router
+    # If router supports a risk penalty parameter on build or as attribute you can set it here:
+    try:
+        if hasattr(router, "risk_penalty_factor"):
+            router.risk_penalty_factor = float(risk_penalty)
+    except Exception:
+        pass
 
+    # Build network (may be cached on disk by router itself)
+    router.build_routing_network(verbose=False, use_cache=True)
+
+    return router
 
 # -------------------------
 # Utility: create a stable hash of inputs so we know when inputs changed
@@ -386,49 +397,18 @@ def render_results_from_state():
             st.error(f"Could not rebuild map from session: {e}")
 
 # -------------------------
-# Main UI (in a form so app doesn't rerun on every widget change)
+# Load flood gdf and prepare shared values (once)
 # -------------------------
-st.subheader("Choose your location")
+# Notebook upload bytes (if user selected uploaded notebook)
+uploaded_nb_bytes = uploaded_nb_file.read() if uploaded_nb_file is not None else None
 
-with st.form(key="route_form"):
-    names = [loc["name"] for loc in SAMPLE_LOCATIONS]
-    selected_name = st.selectbox("Select a location (dropdown)", names)
-
-    selected_loc = next(filter(lambda d: d["name"] == selected_name, SAMPLE_LOCATIONS), None)
-
-    if selected_loc and selected_loc["lat"] is None:
-        c1, c2 = st.columns(2)
-        with c1:
-            custom_lat = st.number_input("Latitude", value=14.6500, format="%.6f")
-        with c2:
-            custom_lon = st.number_input("Longitude", value=121.0300, format="%.6f")
-        start_lat = custom_lat
-        start_lon = custom_lon
-    else:
-        start_lat = selected_loc["lat"]
-        start_lon = selected_loc["lon"]
-
-    max_routes = st.slider("Maximum routes to show", min_value=1, max_value=3, value=3)
-
-    submitted = st.form_submit_button("🔍 Find routes")
-
-# Notebook upload bytes if user chose that option
-uploaded_nb_bytes = None
-if uploaded_nb_file is not None:
-    uploaded_nb_bytes = uploaded_nb_file.read()
-
-# Load flood gdf if uploaded
+# Load flood gdf (uploaded or local)
 flood_gdf = load_flood_gdf_from_bytes(flood_file)
 flood_file_name = flood_file.name if flood_file is not None else "default"
 
-# Compute deterministic input hash
-current_input_hash = compute_input_hash(start_lat, start_lon, grid_resolution, simplify_tol_m, evac_centers, flood_file_name, risk_penalty)
+# Ensure session keys exist
 if "last_input_hash" not in st.session_state:
     st.session_state["last_input_hash"] = None
-
-# If stored results exist and inputs didn't change, render them
-if st.session_state.get("routes") and st.session_state.get("last_input_hash") == current_input_hash:
-    render_results_from_state()
 
 # -------------------------
 # TABS: Landing, Evacuation Route, Relief Centers
@@ -461,60 +441,93 @@ with tabs[0]:
         except Exception as e:
             st.error(f"Failed to render landing map: {e}")
 
-# ----- Evacuation Route: simpler working panel -----
+
+# ----- Evacuation Route (MAIN UI moved here) -----
 with tabs[1]:
     st.header("Evacuation Route Panel")
 
-    # If there's a local evac-centers.csv file, show note
+    st.write("Choose your start location (dropdown or custom coordinates). The app returns up to three best routes to nearby evacuation centers (soft avoidance applied).")
+
+    # show note if local evac centers present
     local_evac_path = Path("evac-centers.csv")
     if local_evac_path.exists():
         st.info("Using evac-centers.csv from app folder for evacuation centers.")
 
-    # Location input
-    col_a, col_b = st.columns([2, 1])
-    with col_a:
-        use_barangay = st.checkbox("Use barangay centroid as start", value=False)
+    # The form ensures the app does not rerun on each widget change
+    with st.form(key="route_form"):
+        # Dropdown sample locations
+        names = [loc["name"] for loc in SAMPLE_LOCATIONS]
+        selected_name = st.selectbox("Select a location (dropdown)", names)
+
+        selected_loc = next(filter(lambda d: d["name"] == selected_name, SAMPLE_LOCATIONS), None)
+
+        # Let user override with custom coords explicitly
+        use_custom_coords = st.checkbox("Enter custom coordinates (override dropdown)", value=False)
+
+        if use_custom_coords:
+            c1, c2 = st.columns(2)
+            with c1:
+                custom_lat = st.number_input("Latitude", value=14.6500, format="%.6f")
+            with c2:
+                custom_lon = st.number_input("Longitude", value=121.0300, format="%.6f")
+            start_lat = float(custom_lat)
+            start_lon = float(custom_lon)
+        else:
+            # If dropdown entry lacks coords, show fallbacks
+            if selected_loc is None or selected_loc.get("lat") is None:
+                c1, c2 = st.columns(2)
+                with c1:
+                    start_lat = float(st.number_input("Latitude", value=14.6500, format="%.6f"))
+                with c2:
+                    start_lon = float(st.number_input("Longitude", value=121.0300, format="%.6f"))
+            else:
+                start_lat = float(selected_loc["lat"])
+                start_lon = float(selected_loc["lon"])
+
+        # Allow barangay centroid option (keeps existing behavior)
+        use_barangay = st.checkbox("Use barangay centroid as start (overrides above)", value=False)
         if use_barangay and 'barangay_gdf' in globals() and barangay_gdf is not None:
             try:
                 chosen = st.selectbox("Choose Barangay", options=barangay_gdf['NAME'].tolist())
                 sel = barangay_gdf[barangay_gdf['NAME'] == chosen]
-                # compute union/centroid robustly (use union_all when available)
                 try:
                     union_geom = sel.geometry.union_all() if hasattr(sel.geometry, "union_all") else sel.geometry.unary_union
                 except Exception:
                     union_geom = sel.geometry.unary_union
-                # get centroid in lat/lon for inputs
                 try:
                     start_pt = gpd.GeoSeries([union_geom], crs=sel.crs).to_crs(epsg=4326).iloc[0].centroid
                     start_lat, start_lon = start_pt.y, start_pt.x
                 except Exception:
-                    start_lat, start_lon = 14.6500, 121.0300
+                    # fallback to previously set coords if conversion fails
+                    pass
             except Exception:
-                start_lat, start_lon = 14.6500, 121.0300
-        else:
-            c1, c2 = st.columns(2)
-            with c1:
-                start_lat = st.number_input("Start latitude", value=14.6500, format="%.6f")
-            with c2:
-                start_lon = st.number_input("Start longitude", value=121.0300, format="%.6f")
+                pass
 
-        max_routes = st.number_input("Max routes to show", min_value=1, max_value=3, value=3)
-        run_button = st.button("Compute routes")
+        # max routes, slider limited to 1..3
+        max_routes = int(st.slider("Maximum routes to show", min_value=1, max_value=3, value=3))
 
-    with col_b:
-        st.subheader("Real-time road status (derived)")
-        st.markdown("Road segments overlapping flood polygons are red; clear segments are green. (Heuristic)")
+        # Submit button
+        submitted = st.form_submit_button("🔍 Find routes")
 
-    # When user presses Compute
-    if run_button:
-        if flood_gdf is None:
+    # Compute input hash (include risk penalty) for caching and persistence
+    try:
+        current_input_hash = compute_input_hash(start_lat, start_lon, grid_resolution, simplify_tol_m, evac_centers, flood_file_name, risk_penalty)
+    except Exception:
+        current_input_hash = None
+
+    # If cached routes exist and inputs didn't change, render them (persisted view)
+    if st.session_state.get("routes") and st.session_state.get("last_input_hash") == current_input_hash:
+        render_results_from_state()
+
+    # On submit, (re)build router and compute routes
+    if submitted:
+        if start_lat is None or start_lon is None:
+            st.warning("Please provide coordinates (either via dropdown, barangay centroid, or custom input).")
+        elif flood_gdf is None:
             st.error("Flood layer required. Upload or place the shapefile in the app folder.")
         else:
-            with st.spinner("Loading router class and building network (cached) — this may take a few seconds..."):
-                # read uploaded notebook bytes if provided
-                uploaded_nb_bytes = uploaded_nb_file.read() if uploaded_nb_file is not None else None
-
-                # Build router instance (uses caching)
+            with st.spinner("Preparing router and computing routes..."):
+                # Build router instance (this function uses st.cache_resource)
                 try:
                     router = build_router_class_and_instance(
                         flood_gdf_obj=flood_gdf,
@@ -527,63 +540,76 @@ with tabs[1]:
                     st.error(f"Failed to prepare router: {e}")
                     st.stop()
 
-            # Compute routes (try to pass risk_penalty; fallback if router doesn't accept it)
-            try:
+                # Compute routes: try to pass risk_penalty_factor if router supports it
                 try:
-                    routes = router.find_routes_to_all_centers(start_lat, start_lon, max_routes=max_routes, risk_penalty_factor=float(risk_penalty))
-                except TypeError:
-                    routes = router.find_routes_to_all_centers(start_lat, start_lon, max_routes=max_routes)
-            except Exception as e:
-                st.error(f"Failed to compute routes: {e}")
-                routes = []
+                    try:
+                        routes = router.find_routes_to_all_centers(start_lat, start_lon, max_routes=max_routes, risk_penalty_factor=float(risk_penalty))
+                    except TypeError:
+                        routes = router.find_routes_to_all_centers(start_lat, start_lon, max_routes=max_routes)
+                except Exception as e:
+                    st.error(f"Routing failed: {e}")
+                    routes = []
 
             if not routes:
-                st.info("No routes found. Try a different starting location or adjust grid resolution.")
-                # clear previous session results so UI updates cleanly
+                st.info("No routes found. Try a different starting location, increase grid resolution, or check flood data.")
+                # Clear old session results
                 for k in ("routes", "router", "start_coords", "last_input_hash", "last_map_html"):
                     st.session_state.pop(k, None)
             else:
-                # Save into session_state so results persist across reruns and avoid flicker
-                st.session_state["router"] = router
-                st.session_state["routes"] = routes
-                st.session_state["start_coords"] = (start_lat, start_lon)
+                # Keep up to top 3 routes (router typically sorts by weighted_cost)
+                top_routes = routes[:3]
 
-                # Build and store map HTML (use the existing helper which caches HTML by input hash)
+                # Persist for reruns
+                st.session_state["router"] = router
+                st.session_state["routes"] = top_routes
+                st.session_state["start_coords"] = (start_lat, start_lon)
+                st.session_state["last_input_hash"] = current_input_hash
+
+                # Render and cache the folium map HTML once
                 try:
-                    current_input_hash = compute_input_hash(start_lat, start_lon, grid_resolution, simplify_tol_m, evac_centers, (flood_file.name if flood_file is not None else "default"), risk_penalty)
                     html = _render_and_cache_map_html(
-                        router, routes, (start_lat, start_lon),
+                        router, top_routes, (start_lat, start_lon),
                         simplify_tol_m, show_flood_layer, light_mode,
                         input_hash_key=current_input_hash
                     )
-                    # display the HTML
-                    components.html(html, height=600, scrolling=True)
-                    # store values for future re-render
-                    st.session_state["last_input_hash"] = current_input_hash
-                    st.session_state["start_coords"] = (start_lat, start_lon)
+                    components.html(html, height=650, scrolling=True)
                 except Exception as e:
                     st.error(f"Failed to render map: {e}")
-                    # fallback: try st_folium direct rendering
+                    # fallback: use st_folium direct rendering
                     try:
-                        st_folium(router.visualize_routes(routes, (start_lat, start_lon)), width=1000, height=600)
+                        st_folium(router.visualize_routes(top_routes, (start_lat, start_lon)), width=1000, height=600)
                     except Exception:
                         st.error("Fallback rendering also failed.")
 
-                # summary for best route
-                try:
-                    best = routes[0]
-                    st.subheader("Route summary (best option)")
-                    st.write(f"Destination: **{best['center_name']}**")
-                    st.write(f"Distance: **{best['distance_km']:.2f} km**")
-                    st.write(f"Weighted cost: **{best['weighted_cost']:.2f}**")
-                    st.write(f"Estimated time: **{best['estimated_time_min']:.0f} min**")
-                    st.write(recommend_departure(best['distance_km']))
-                except Exception:
-                    pass
+                # Summary table for top 3
+                st.subheader("Top evacuation options (up to 3)")
+                rows = []
+                for i, r in enumerate(top_routes):
+                    rows.append({
+                        "rank": i + 1,
+                        "center": r["center_name"],
+                        "distance_km": round(r["distance_km"], 3),
+                        "weighted_cost": round(r["weighted_cost"], 3),
+                        "time_min": int(r["estimated_time_min"]),
+                        "high_risk_m": int(r.get("high_risk_distance_m", 0)),
+                    })
+                st.table(pd.DataFrame(rows))
 
-# ----- Relief Centers: list and simple accessibility heuristic -----
+                # Download CSV of results
+                csv = pd.DataFrame(rows).to_csv(index=False).encode("utf-8")
+                st.download_button("Download top routes (CSV)", data=csv, file_name="top_routes.csv", mime="text/csv")
+
+                # Show start coordinates and chosen risk penalty
+                st.markdown(f"**Start coordinates:** {start_lat:.6f}, {start_lon:.6f}  —  **Risk penalty**: {risk_penalty}")
+
+                # Persist the latest map HTML so it remains visible until inputs change
+                if current_input_hash is not None:
+                    st.session_state[f"map_html_{current_input_hash}"] = st.session_state.get("last_map_html", None)
+
+
+# ----- Relief Centers: list of centers & accessibility -----
 with tabs[2]:
-    st.header("Relief Centers")
+    st.header("Relief Center Information")
     st.write("Relief centers loaded from evac-centers.csv (if present) or from uploaded CSV / defaults.")
 
     try:
@@ -613,16 +639,6 @@ with tabs[2]:
                 rc_df['accessibility'] = [None]*len(rc_df)
 
             st.dataframe(rc_df)
-            # small map of relief centers
-            try:
-                import folium
-                center = [rc_df['lat'].mean(), rc_df['lon'].mean()]
-                mrc = folium.Map(location=center, zoom_start=12)
-                for _, row in rc_df.iterrows():
-                    folium.Marker([row['lat'], row['lon']], popup=row['name'], icon=folium.Icon(color='green', icon='home', prefix='fa')).add_to(mrc)
-                components.html(mrc.get_root().render(), height=500, scrolling=True)
-            except Exception:
-                pass
         else:
             st.info("No relief center data available.")
     except Exception as e:
