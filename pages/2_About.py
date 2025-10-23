@@ -35,15 +35,11 @@ with st.sidebar:
                 #width="30" height="30"></a>""", unsafe_allow_html=True)
 
 #Routing Algorithm
-st.subheader("Routing Algorithm")
+st.subheader("Flood Evacuation Routing Algorithm")
 
 st.write("""
-        The CSR for MSMEs was developed by analyzing various financial and socioeconomic indicators. Transactional and behavioral data were first consolidated into quarterly sums to smooth out short-term fluctuations. Categorical variables were then converted to numeric values through appropriate mapping techniques. After preprocessing the features, correlation-based feature selection was performed to enhance model efficiency, removing variables with correlation coefficients exceeding 0.8 to eliminate redundancy while preserving the most informative indicators.
+        Under the hood: we load flood polygons (EPSG:32651), create a smart grid over the affected area, assign per-node risk with batched spatial joins, then build a graph connecting neighboring grid points. Each edge gets a distance and a risk-weighted cost. For routing we run A* with a Euclidean heuristic. A single slider controls the risk penalty factor: 1.0 = fastest, >1 = progressively safer routes. This is soft avoidance — we penalize risky edges instead of forbidding them, which keeps routes feasible while prioritizing safety.
          
-         The framework categorized indicators into four fundamental concepts: `Financial Health`, `Credit Reliability`, `Customer Engagement`, and `Socioeconomic Stability`. Within each concept, the mean of the features was taken and then standardized using z-score transformation to ensure comparability across different measures. These standardized features were then combined through mean aggregation to create composite scores that captured the overall strength of each conceptual dimension.
-         
-         The final resilience score was computed by taking the average of the four concept-specific composite scores, ensuring equal weight distribution across all dimensions. To enhance interpretability, the resulting score was scaled to a range of 0 to 1 using min-max scaling. This standardized approach produced a robust metric that effectively captures multiple aspects of MSME resilience while maintaining simplicity and clarity in its interpretation.
-
          """)
 
 st.title("🔥 About Hot Issue")
