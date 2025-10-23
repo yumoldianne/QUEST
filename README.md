@@ -5,7 +5,7 @@ Compute safe, practical evacuation routes from a user location to nearby relief 
 
 ## Why this matters
 
-During floods, the *safest* route is not always the shortest. SafeRouteQC helps residents and local responders find realistic evacuation routes that **balance travel time with flood exposure**, using an interpretable soft-avoidance model and a compact, interactive dashboard.
+During floods, the *safest* route is not always the shortest. QUEST helps residents and local responders find realistic evacuation routes that **balance travel time with flood exposure**, using an interpretable soft-avoidance model and a compact, interactive dashboard.
 
 ## Highlights / Quick features
 
