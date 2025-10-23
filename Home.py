@@ -17,8 +17,8 @@ import geopandas as gpd
 from streamlit_folium import st_folium
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="Flood Evacuation Router", layout="wide")
-st.title("🚨 Flood Evacuation Router — router.py backend")
+st.set_page_config(page_title="QUEST", layout="wide")
+st.title("🚨 QUEST: Quezon City Evacuation Support Tool")
 
 # -------------------------
 # Small helper functions
@@ -385,7 +385,6 @@ def render_results_from_state():
         except Exception as e:
             st.error(f"Could not rebuild map from session: {e}")
 
-
 # -------------------------
 # Main UI (in a form so app doesn't rerun on every widget change)
 # -------------------------
@@ -438,7 +437,7 @@ tabs = st.tabs(["Landing", "Evacuation Route", "Relief Centers"])
 
 # ----- Landing: overview of flood-prone zones -----
 with tabs[0]:
-    st.header("Overview — Flood-prone Zones (Quezon City)")
+    st.header("Overview: Flood-prone Zones (Quezon City)")
     if flood_gdf is None:
         st.info("No flood layer loaded. Upload a flood shapefile/GeoJSON in the sidebar or place 'ph137404000_fh5yr_30m_10m.shp' in the app folder.")
     else:
@@ -628,14 +627,3 @@ with tabs[2]:
             st.info("No relief center data available.")
     except Exception as e:
         st.error(f"Could not display relief centers: {e}")
-
-# Footer tips
-st.markdown("---")
-st.markdown(
-    """
-**Tips**
-- If building the network takes too long, increase grid resolution (larger = fewer nodes) or upload a smaller flood polygon file.
-- For fastest map rendering, uncheck "Show flood layer".
-- To use your own evacuation centers, upload a CSV with `name,lat,lon` in the sidebar or place evac-centers.csv in the app folder.
-"""
-)
