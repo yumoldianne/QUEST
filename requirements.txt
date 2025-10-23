@@ -20,7 +20,6 @@ folium
 numba
 dbfread
 matplotlib
-geopandas==0.13.2
 pyproj==3.6.0
 shapely==2.0.1
 fiona==1.9.4
