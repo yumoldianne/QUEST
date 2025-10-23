@@ -19,3 +19,6 @@ networkx
 shapely
 scipy
 folium
+numba
+rasterio
+dbfread
