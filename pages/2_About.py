@@ -7,9 +7,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.title("🤖 What is QUEST?")
+st.title("🚨 What is QUEST?")
 
-st.info("💡 **QUEST: Quezon City Evacuation Support Tool** is designed to be a dashboard that provides data during times of typhoon- and rainfall-induced floods on which relief operations centers to seek out, the optimal route to travel to these centers in order to maximize preparedness and strengthen our resilience against climate disasters. .")
+st.info("💡 **QUEST: Quezon City Evacuation Support Tool** is designed to be a dashboard that provides data during times of typhoon- and rainfall-induced floods on which relief operations centers to seek out, the optimal route to travel to these centers in order to maximize preparedness and strengthen our resilience against climate disasters.")
 
 st.sidebar.info("""Please note that this dashboard is a prototype. 
                 Users are advised that the tool may contain errors, 
@@ -29,10 +29,6 @@ with st.sidebar:
             #st.markdown("""<a href="https://docs.google.com/document/d/1eu39rT-Zh6KhUNwXrAzOwdOJv0_lz3IDv4X_GEmaDsA/edit?usp=sharing">
                #<img src="https://cdn-icons-png.flaticon.com/512/482/482202.png" 
                # #width="30" height="30"></a>""", unsafe_allow_html=True)
-        #with col3:
-            #st.markdown("""<a href="https://www.instagram.com/eltgnd_v/">
-                #<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e7/Instagram_logo_2016.svg/2048px-Instagram_logo_2016.svg.png" 
-                #width="30" height="30"></a>""", unsafe_allow_html=True)
 
 #Routing Algorithm
 st.subheader("Flood Evacuation Routing Algorithm")
@@ -42,8 +38,17 @@ st.write("""
          
          """)
 
+#Accessibility Hueristic
+st.subheader("Relief Centers Accessibility Hueristic")
+
+st.write("""
+        We measure accessibility around each relief center by buffering the center (default 200 m), seeing how much of that buffer overlaps high-risk flood polygons (Var == 3), and converting that overlap fraction into an accessibility score: accessibility = max(0, 1 − (area_of_high_risk_within_buffer / buffer_area))
+
+        Therefore, a score of 1.0 = fully accessible (no high-risk area in the buffer) while a score of 0.0 = fully surrounded by high risk.         
+         """)
+
 st.title("🔥 About Hot Issue")
 
 st.write("""
-         The team comprises of Juliana Ambrosio (5 BS MIS), Caitlyn Lee (M DSc), Jan Manzano (4 BS MIS), Andrea Senson (BS AMDSc '25), and Dianne Yumol (M DSc).
+         The team comprises of uliana Ambrosio (BS MIS '26), Caitlyn Lee (BS AMDSc '25, M DSc '26), Jan Manzano (BS MIS '26) , Andrea Senson (BS AMDSc '25), and Dianne Yumol (BS AMDSc '25, M DSc '26).
          """)

@@ -17,7 +17,7 @@ import geopandas as gpd
 from streamlit_folium import st_folium
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="QUEST", layout="wide")
+st.set_page_config(page_title="QUEST", page_icon="🚨", layout="wide")
 st.title("🚨 QUEST: Quezon City Evacuation Support Tool")
 
 # -------------------------
@@ -34,6 +34,33 @@ def recommend_departure(distance_km):
         return "Consider leaving within 10–15 minutes."
     else:
         return "Start moving now — this is a long walk."
+
+def safe_union(gs):
+    """
+    Robust union helper for GeoSeries / GeoDataFrame / GeometryCollection.
+    Prefer union_all() (GeoPandas newer versions). Fall back to unary_union.
+    Returns a shapely geometry (the union).
+    """
+    # If passed a GeoDataFrame, use its geometry Series
+    try:
+        geom_series = gs.geometry if hasattr(gs, "geometry") else gs
+    except Exception:
+        geom_series = gs
+
+    # If it's a GeoSeries or Series with the method union_all, use it
+    if hasattr(geom_series, "union_all"):
+        try:
+            return geom_series.union_all()
+        except Exception:
+            pass
+
+    # Otherwise fall back to unary_union (older GeoPandas / shapely)
+    if hasattr(geom_series, "unary_union"):
+        return geom_series.unary_union
+
+    # As a last resort, try shapely.ops.unary_union on an iterable of geometries
+    from shapely.ops import unary_union
+    return unary_union(list(geom_series))
 
 # -------------------------
 # Notebook loader (fallback)
@@ -76,7 +103,6 @@ def get_router_class(local_notebook_path: Path = Path("routing.ipynb"), uploaded
         if hasattr(router_module, "OptimizedFloodEvacuationRouter"):
             return router_module.OptimizedFloodEvacuationRouter
     except Exception:
-        # ignore and try notebook fallback
         pass
 
     # 2) Use uploaded notebook bytes (if provided)
@@ -99,7 +125,6 @@ def get_router_class(local_notebook_path: Path = Path("routing.ipynb"), uploaded
             raise ImportError(f"Local notebook {local_notebook_path} executed but OptimizedFloodEvacuationRouter not found.")
 
     raise ImportError("Could not find OptimizedFloodEvacuationRouter in router.py or routing.ipynb (or uploaded notebook).")
-
 
 # -------------------------
 # Sidebar: inputs & settings
@@ -194,7 +219,7 @@ def load_flood_gdf_from_bytes(uploaded_file):
     """Load an uploaded flood vector into a GeoDataFrame (or return None)."""
     if uploaded_file is None:
         # if the local default shapefile exists, try to load it
-        local = Path("ph137404000_fh5yr_30m_10m.shp")
+        local = Path("data/ph137404000_fh5yr_30m_10m.shp")
         if local.exists():
             try:
                 gdf = gpd.read_file(local)
@@ -235,18 +260,20 @@ def load_flood_gdf_from_bytes(uploaded_file):
         st.error(f"Failed to read uploaded flood file: {e}")
         return None
 
-
 # -------------------------
 # Build router (cached resource) - do NOT hash the GeoDataFrame by using a leading underscore
 # -------------------------
 @st.cache_resource
-def build_router_class_and_instance(_flood_gdf_obj, grid_res, simplify_tol_m, evac_centers_list, uploaded_nb_bytes=None, risk_penalty=1.0):
+def build_router_class_and_instance(_flood_gdf_obj=None, grid_res=50, simplify_tol_m=300, evac_centers_list=None, uploaded_nb_bytes=None, risk_penalty=1.0, **kwargs):
     """
-    Build and return a router instance. Do NOT let Streamlit attempt to hash the GeoDataFrame:
-    - Leading underscore in parameter name prevents hashing (Streamlit treats it as unhashable).
-    - Call it like: build_router_class_and_instance(flood_gdf, grid_res, simplify_tol_m, evac_centers, uploaded_nb_bytes=...)
+    Build and return a router instance.
+    - The first parameter starts with '_' so Streamlit does not attempt to hash it.
+    - Backwards compatibility: if callers pass flood_gdf_obj=..., it's accepted via kwargs.
     """
-    # Local name for readability
+    # Accept older callers passing flood_gdf_obj as a keyword
+    if _flood_gdf_obj is None and 'flood_gdf_obj' in kwargs:
+        _flood_gdf_obj = kwargs.pop('flood_gdf_obj')
+
     flood_gdf_obj = _flood_gdf_obj
 
     # Load class (from router.py or routing.ipynb)
@@ -267,14 +294,14 @@ def build_router_class_and_instance(_flood_gdf_obj, grid_res, simplify_tol_m, ev
             raise RuntimeError(f"Failed to instantiate router class: {e}") from e
 
     # Set evac centers if method exists
-    if hasattr(router, "set_evacuation_centers"):
+    if hasattr(router, "set_evacuation_centers") and evac_centers_list is not None:
         try:
             router.set_evacuation_centers(evac_centers_list)
         except Exception:
-            # ignore if something odd; continue
             pass
     else:
-        st.warning("Router class does not expose `set_evacuation_centers`. Ensure the class has this method.")
+        if not hasattr(router, "set_evacuation_centers"):
+            st.warning("Router class does not expose `set_evacuation_centers`. Ensure the class has that method.")
 
     # Apply simplify tolerance if the router exposes it
     try:
@@ -283,7 +310,7 @@ def build_router_class_and_instance(_flood_gdf_obj, grid_res, simplify_tol_m, ev
     except Exception:
         pass
 
-    # If router supports a risk penalty parameter on build or as attribute you can set it here:
+    # If router supports a risk penalty attribute you can set it here:
     try:
         if hasattr(router, "risk_penalty_factor"):
             router.risk_penalty_factor = float(risk_penalty)
@@ -303,7 +330,6 @@ def compute_input_hash(start_lat, start_lon, grid_res, simplify_tol_m, evac_cent
     m.update(f"{start_lat}_{start_lon}_{grid_res}_{simplify_tol_m}_{flood_file_name}_{risk_penalty}".encode())
     m.update(pickle.dumps(evac_centers))
     return m.hexdigest()
-
 
 # -------------------------
 # Helper: build and cache map HTML
@@ -354,7 +380,6 @@ def _render_and_cache_map_html(router, routes, start_coords, simplify_tol_m, sho
     st.session_state[cache_key] = html
     st.session_state["last_map_html"] = html
     return html
-
 
 # -------------------------
 # Utility: render stored results (table + cached HTML)
@@ -415,41 +440,62 @@ if "last_input_hash" not in st.session_state:
 # -------------------------
 tabs = st.tabs(["Landing", "Evacuation Route", "Relief Centers"])
 
-# ----- Landing: overview of flood-prone zones -----
+# ----- Landing: overview of flood-prone zones (simplified/dissolved for speed) -----
 with tabs[0]:
     st.header("Overview: Flood-prone Zones (Quezon City)")
     if flood_gdf is None:
         st.info("No flood layer loaded. Upload a flood shapefile/GeoJSON in the sidebar or place 'ph137404000_fh5yr_30m_10m.shp' in the app folder.")
     else:
         try:
-            # simplify for web map
-            flood_for_map = flood_gdf.to_crs(epsg=4326).copy()
+            # Dissolve by Var to reduce feature count and simplify aggressively for landing map
             try:
-                flood_for_map["geometry"] = flood_for_map.geometry.simplify(tolerance=0.0001)
+                if 'Var' in flood_gdf.columns:
+                    dissolved = (
+                        flood_gdf
+                        .dissolve(by='Var')['geometry']
+                        .reset_index()
+                        .rename(columns={'geometry': 'geometry'})
+                    )
+                    dissolved_gdf = gpd.GeoDataFrame(dissolved, geometry='geometry', crs=flood_gdf.crs)
+                else:
+                    union_geom = safe_union(flood_gdf)
+                    dissolved_gdf = gpd.GeoDataFrame([{'Var': 0, 'geometry': union_geom}], crs=flood_gdf.crs)
+            except Exception:
+                dissolved_gdf = flood_gdf.copy()
+
+            # Convert to WGS84 for folium and simplify using a larger tolerance when light_mode requested
+            flood_for_map = dissolved_gdf.to_crs(epsg=4326).copy()
+            # convert simplify tol meters -> degrees (approx) and be more aggressive for landing overview
+            landing_tol_m = max(simplify_tol_m * (2 if light_mode else 1), 300)  # at least 300m for overview
+            tol_deg = landing_tol_m / 111000.0
+            try:
+                flood_for_map['geometry'] = flood_for_map.geometry.simplify(tol_deg)
             except Exception:
                 pass
+
             import folium
-            center = [flood_for_map.geometry.unary_union.centroid.y, flood_for_map.geometry.unary_union.centroid.x]
-            m = folium.Map(location=center, zoom_start=12)
+            # safe center from union centroid
+            center_geom = safe_union(flood_for_map)
+            center = [center_geom.centroid.y, center_geom.centroid.x]
+            m = folium.Map(location=center, zoom_start=12, control_scale=True)
             def style_fn(feature):
                 risk = feature["properties"].get("Var", 0)
                 colors = {-2: "#CCCCCC", -1: "#FFFFCC", 0: "#FFFFFF", 1: "#FFEDA0", 2: "#FD8D3C", 3: "#E31A1C"}
                 return {"fillColor": colors.get(risk, "#FFFFFF"), "color": "black", "weight": 0.3, "fillOpacity": 0.4}
-            folium.GeoJson(flood_for_map.__geo_interface__, name="Flood Risk", style_function=style_fn).add_to(m)
+            folium.GeoJson(flood_for_map.__geo_interface__, name="Flood Risk (simplified)", style_function=style_fn).add_to(m)
             folium.LayerControl().add_to(m)
             components.html(m.get_root().render(), height=600, scrolling=True)
         except Exception as e:
             st.error(f"Failed to render landing map: {e}")
 
-
-# ----- Evacuation Route (MAIN UI moved here) -----
+# ----- Evacuation Route (MAIN UI) -----
 with tabs[1]:
     st.header("Evacuation Route Panel")
 
-    st.write("Choose your start location (dropdown or custom coordinates). The app returns up to three best routes to nearby evacuation centers (soft avoidance applied).")
+    st.write("Choose your start location (dropdown, barangay centroid, or custom coordinates). The app returns up to three best routes to nearby evacuation centers (soft avoidance applied).")
 
     # show note if local evac centers present
-    local_evac_path = Path("evac-centers.csv")
+    local_evac_path = Path("data\evac-centers.csv")
     if local_evac_path.exists():
         st.info("Using evac-centers.csv from app folder for evacuation centers.")
 
@@ -491,14 +537,13 @@ with tabs[1]:
                 chosen = st.selectbox("Choose Barangay", options=barangay_gdf['NAME'].tolist())
                 sel = barangay_gdf[barangay_gdf['NAME'] == chosen]
                 try:
-                    union_geom = sel.geometry.union_all() if hasattr(sel.geometry, "union_all") else sel.geometry.unary_union
+                    union_geom = safe_union(sel)
                 except Exception:
-                    union_geom = sel.geometry.unary_union
+                    union_geom = sel.geometry.inter.unary_union
                 try:
                     start_pt = gpd.GeoSeries([union_geom], crs=sel.crs).to_crs(epsg=4326).iloc[0].centroid
                     start_lat, start_lon = start_pt.y, start_pt.x
                 except Exception:
-                    # fallback to previously set coords if conversion fails
                     pass
             except Exception:
                 pass
@@ -529,13 +574,8 @@ with tabs[1]:
             with st.spinner("Preparing router and computing routes..."):
                 # Build router instance (this function uses st.cache_resource)
                 try:
-                    router = build_router_class_and_instance(
-                        flood_gdf_obj=flood_gdf,
-                        grid_res=grid_resolution,
-                        simplify_tol_m=simplify_tol_m,
-                        evac_centers_list=evac_centers,
-                        uploaded_nb_bytes=uploaded_nb_bytes,
-                    )
+                    # PASS flood_gdf POSITIONALLY to match the leading-underscore param in the cached function
+                    router = build_router_class_and_instance(flood_gdf, grid_res=grid_resolution, simplify_tol_m=simplify_tol_m, evac_centers_list=evac_centers, uploaded_nb_bytes=uploaded_nb_bytes, risk_penalty=risk_penalty)
                 except Exception as e:
                     st.error(f"Failed to prepare router: {e}")
                     st.stop()
@@ -606,7 +646,6 @@ with tabs[1]:
                 if current_input_hash is not None:
                     st.session_state[f"map_html_{current_input_hash}"] = st.session_state.get("last_map_html", None)
 
-
 # ----- Relief Centers: list of centers & accessibility -----
 with tabs[2]:
     st.header("Relief Center Information")
@@ -626,8 +665,9 @@ with tabs[2]:
                         frac = 0.0
                         if not high.empty:
                             inter = high.geometry.intersection(buf)
+                            inter_union = safe_union(inter)
                             try:
-                                inter_union = inter.unary_union
+                                inter_union = safe_union(inter)
                                 frac = (inter_union.area / buf.area) if buf.area>0 else 0.0
                             except Exception:
                                 frac = 0.0

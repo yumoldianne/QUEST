@@ -22,7 +22,7 @@ warnings.filterwarnings("ignore")
 
 # ---- Defaults ----
 DEFAULT_PROJ_EPSG = 32651
-DEFAULT_SHAPEFILE_NAME = "ph137404000_fh5yr_30m_10m.shp"
+DEFAULT_SHAPEFILE_NAME = "data/ph137404000_fh5yr_30m_10m.shp"
 
 # ---- helper loader with repair attempts ----
 def load_flood_gdf(path_or_gdf=None):
