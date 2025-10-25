@@ -6,7 +6,9 @@ Compute safe, practical evacuation routes from a user location to nearby relief 
 
 ## Why does it matter?
 
-During floods, the *safest* route is not always the shortest. QUEST helps residents and local responders find realistic evacuation routes that **balance travel time with flood exposure**, using an interpretable soft-avoidance model and a compact, interactive dashboard.
+During floods, the *safest* route is not always the shortest. **QUEST** is an **evacuation planning dashboard** built with **Streamlit**, designed to assist in **flood risk management** and **disaster response planning** for Quezon City.  
+
+It integrates **geospatial analytics**, **graph-based routing**, and **interactive visualization** to guide both residents and planners toward the safest, most efficient evacuation routes during floods.
 
 ## Highlights
 
@@ -14,7 +16,7 @@ During floods, the *safest* route is not always the shortest. QUEST helps reside
 * **Smart grid graph** built from flood polygons to approximate walkable space.
 * **Soft-avoidance** risk model — user-controlled slider penalizes risky areas (1.0 = no avoidance, higher = safer routing).
 * Up to **three ranked route options** with distance, risk exposure breakdown, and estimated time.
-* Relief center list and accessibility heuristic.
+* Relief center list and **accessibility heuristic**.
 
 
 ## Technical summary
@@ -56,6 +58,22 @@ During floods, the *safest* route is not always the shortest. QUEST helps reside
    * A* with Euclidean heuristic on projected coordinates to each evacuation center node.
    * Return up to 3 ranked routes (lowest weighted cost).
 
+## Repository structure
+├── Home.py                      # Main Streamlit app (QUEST) <br>
+├── router.py                    # Routing class implementation <br>
+├── requirements.txt             # Python dependencies used for local install <br>
+├── data/ <br>
+│   ├── ph137404000_fh5yr_30m_10m.shp  # default flood shapefile (plus .dbf/.shx etc.) <br>
+│   └── evac-centers.csv               # default relief/evacuation centers CSV <br>
+├── misc                               # misc files (EDA, caching/precomputed routing artifacts, etc.) <br>
+├── pages/ <br>
+│   └── 2_About.py                     # About section for QUEST <br>
+└── README.md
+
+## Local development
+
+QUEST relies on GeoPandas, Rasterio, and PyProj, which depend on GDAL/PROJ libraries not fully supported by Streamlit Cloud. As a result, deployment is currently limited to local or Docker-based environments for full geospatial functionality.
+
 ## Authors & acknowledgements
 
-* Team: Juliana Ambrosio (BS MIS '26), Caitlyn Lee (BS AMDSc '25, M DSc '26), Jan Manzano (BS MIS '26) , Andrea Senson (BS AMDSc '25), and Dianne Yumol (BS AMDSc '25, M DSc '26)
+Team: Juliana Ambrosio (BS MIS '26), Caitlyn Lee (BS AMDSc '25, M DSc '26), Jan Manzano (BS MIS '26) , Andrea Senson (BS AMDSc '25), and Dianne Yumol (BS AMDSc '25, M DSc '26)
