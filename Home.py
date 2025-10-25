@@ -172,45 +172,80 @@ if uploaded_locs:
         st.sidebar.error(f"Failed to read uploaded locations CSV: {e}")
 
 # -------------------------
-# Load evac centers: prefer uploaded sidebar, else local evac-centers.csv, else defaults
+# Load evac centers: prefer uploaded sidebar, else local evac-centers.csv (root or data/), else defaults
 # -------------------------
 evac_centers = None
-if evac_file:
+
+# 1) If user uploaded a CSV via the sidebar, honor that first.
+if evac_file is not None:
     try:
         evac_df = pd.read_csv(evac_file)
-        evac_centers = [{"name": row["name"], "lat": float(row["lat"]), "lon": float(row["lon"])} for _, row in evac_df.iterrows()]
+        # accept common column names: 'name','lat','lon' expected for uploaded CSV
+        if {"name", "lat", "lon"}.issubset(set(map(str.lower, evac_df.columns))):
+            # normalize column names (case-insensitive)
+            cols = {c.lower(): c for c in evac_df.columns}
+            evac_centers = [
+                {"name": row[cols["name"]], "lat": float(row[cols["lat"]]), "lon": float(row[cols["lon"]])}
+                for _, row in evac_df.iterrows()
+            ]
+        else:
+            # fallback: try to map common alternate headers like "Center Name","Latitude","Longitude"
+            new_centers = []
+            for _, r in evac_df.iterrows():
+                name = r.get("Center Name") or r.get("Name") or r.get("center") or r.get("center_name") or r.get("center name")
+                lat = r.get("Latitude") or r.get("Lat") or r.get("lat")
+                lon = r.get("Longitude") or r.get("Lon") or r.get("lon")
+                if pd.notna(name) and pd.notna(lat) and pd.notna(lon):
+                    try:
+                        new_centers.append({"name": str(name), "lat": float(lat), "lon": float(lon)})
+                    except Exception:
+                        continue
+            if new_centers:
+                evac_centers = new_centers
+
+        if evac_centers:
+            st.sidebar.success(f"Loaded {len(evac_centers)} evacuation centers from uploaded file.")
     except Exception as e:
-        st.sidebar.error(f"Failed to read evacuation centers CSV: {e}")
+        st.sidebar.error(f"Failed to read uploaded evacuation centers CSV: {e}")
         evac_centers = None
 
-local_evac_path = Path("evac-centers.csv")
-if evac_centers is None and local_evac_path.exists():
-    try:
-        df_local = pd.read_csv(local_evac_path)
-        new_centers = []
-        # try common column names
-        for _, r in df_local.iterrows():
-            name = r.get("Center Name") or r.get("Name") or r.get("center") or r.get("center_name")
-            lat = r.get("Latitude") or r.get("lat")
-            lon = r.get("Longitude") or r.get("lon")
-            if pd.notna(name) and pd.notna(lat) and pd.notna(lon):
-                try:
-                    new_centers.append({"name": str(name), "lat": float(lat), "lon": float(lon)})
-                except Exception:
-                    continue
-        if new_centers:
-            evac_centers = new_centers
-            st.sidebar.success(f"Loaded {len(new_centers)} evacuation centers from evac-centers.csv")
-    except Exception as e:
-        st.sidebar.warning(f"Could not read local evac-centers.csv: {e}")
+# 2) If none uploaded, look for a local file in data/ directory first, then app root.
+if evac_centers is None:
+    possible = [Path("data") / "evac-centers.csv", Path("evac-centers.csv")]
+    found = None
+    for p in possible:
+        if p.exists():
+            found = p
+            break
 
+    if found is not None:
+        try:
+            df_local = pd.read_csv(found)
+            new_centers = []
+            for _, r in df_local.iterrows():
+                name = r.get("Center Name") or r.get("Name") or r.get("center") or r.get("center_name") or r.get("center name")
+                lat = r.get("Latitude") or r.get("Lat") or r.get("lat")
+                lon = r.get("Longitude") or r.get("Lon") or r.get("lon")
+                if pd.notna(name) and pd.notna(lat) and pd.notna(lon):
+                    try:
+                        new_centers.append({"name": str(name), "lat": float(lat), "lon": float(lon)})
+                    except Exception:
+                        continue
+            if new_centers:
+                evac_centers = new_centers
+                st.sidebar.success(f"Loaded {len(new_centers)} evacuation centers from {found}")
+            else:
+                st.sidebar.warning(f"Found {found} but could not parse expected columns.")
+        except Exception as e:
+            st.sidebar.warning(f"Could not read local {found}: {e}")
+
+# 3) fallback defaults if still nothing
 if evac_centers is None:
     evac_centers = [
         {"name": "QC Hall", "lat": 14.6760, "lon": 121.0437},
         {"name": "UP Diliman", "lat": 14.6507, "lon": 121.0494},
         {"name": "Sample Barangay Center", "lat": 14.6600, "lon": 121.0500},
     ]
-
 # -------------------------
 # Helpers: flood loader for uploaded file
 # -------------------------
